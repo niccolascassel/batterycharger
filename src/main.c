@@ -16,21 +16,27 @@
 UART_HandleTypeDef huart2;
 
 /* Struct definida em  stm32f0xx_hal_tim.h para configrar o timer*/
-TIM_HandleTypeDef    TimHandle;
+TIM_HandleTypeDef TimHandle;
+
+/* Struct definida em  stm32f0xx_hal_tim.h para configrar o pwm*/
+TIM_HandleTypeDef pwmTimHandle;
 
 /* Struct definida em  stm32f0xx_hal_gpio.h para configrar o port*/
-static GPIO_InitTypeDef  GPIO_InitStruct;
+static GPIO_InitTypeDef GPIO_InitStruct;
 
 /* ADC configuration structure declaration */
-ADC_HandleTypeDef    AdcHandle;
+ADC_HandleTypeDef AdcHandle;
 
 /* ADC channel configuration structure declaration */
-ADC_ChannelConfTypeDef   sConfig;
+ADC_ChannelConfTypeDef adcConfig;
+
+/* Struct de configuração da saida do Timer */
+TIM_OC_InitTypeDef pwmConfig;
 
 /* Variáveis para armazenamento da versão */
 unsigned char vMajor = 1;
 unsigned char vMinor = 0;
-unsigned char vBeta = 1;
+unsigned char vBeta = 2;
 
 /* Variáveis pra controle da base de tempo */
 unsigned char dezMiliSeg = 0;
@@ -43,9 +49,12 @@ unsigned char contLeAD = 0;
 unsigned char avisoTemperatura = FALSE;
 unsigned char alarmeTemperatura = FALSE;
 unsigned char fase = FASE_A;
-unsigned char tensaoMaxima = 0;
+unsigned char tensaoCarga = 0;
+unsigned char tensaoFlutuacao = 0;
+unsigned char correnteCarga = 0;
 unsigned char temperaturaAviso = 0;
 unsigned char temperaturaAlarme = 0;
+unsigned char pwmStartado = FALSE;
 
 /* Variáveis para armazenamento dos valores pelo A/D */
 unsigned char tensaoInstantanea = 0;
@@ -61,6 +70,13 @@ unsigned char tempoSobreaquecimento = 0;
 double tensao = 0;
 double corrente = 0;
 double temperatura = 0;
+
+/* Cabeçalho de apresentação do projeto */
+char Handler1[BUFFERSIZE] = "\n\r**********************************************\0";
+char Handler2[BUFFERSIZE] = "\n\r Projeto GB - Circuitos Microprocessados\0";
+char Handler3[BUFFERSIZE];
+char Handler4[BUFFERSIZE] = "\n\r Autores: Niccolas F. Cassel e Ingirdt Ayres\0";
+char Handler5[BUFFERSIZE] = "\n\r**********************************************\0";
 
 /* Buffer da comunicacao serial */
 char Buffer[BUFFERSIZE];
@@ -208,40 +224,94 @@ int main(void)
 	}
 
     /* Seleciona o canal analogico (Channel 0) */
-    sConfig.Channel      = ADC_CHANNEL_0;
-    sConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
-    sConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;  // AUMENTA O TEMPO DE AMOSTRAGEM, RESOLVE O PROBLEMA DE INSTABILIDADE
+    adcConfig.Channel      = ADC_CHANNEL_0;
+    adcConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
+    adcConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;  // AUMENTA O TEMPO DE AMOSTRAGEM, RESOLVE O PROBLEMA DE INSTABILIDADE
 
-    if(HAL_ADC_ConfigChannel(&AdcHandle, &sConfig) != HAL_OK)
+    if(HAL_ADC_ConfigChannel(&AdcHandle, &adcConfig) != HAL_OK)
     {
 		Error_Handler();
     }
 
     /* Seleciona o canal analogico (Channel 0) */
-    sConfig.Channel      =  ADC_CHANNEL_1;
-    sConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
-    sConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
+    adcConfig.Channel      =  ADC_CHANNEL_1;
+    adcConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
+    adcConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
     
-	if(HAL_ADC_ConfigChannel(&AdcHandle, &sConfig) != HAL_OK)
+	if(HAL_ADC_ConfigChannel(&AdcHandle, &adcConfig) != HAL_OK)
     {
 		Error_Handler();
     }
 
     /* Seleciona o canal analogico (Channel 0) */
-    sConfig.Channel      =  ADC_CHANNEL_4;
-    sConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
-    sConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
+    adcConfig.Channel      =  ADC_CHANNEL_4;
+    adcConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
+    adcConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
     
-	if(HAL_ADC_ConfigChannel(&AdcHandle, &sConfig) != HAL_OK)
+	if(HAL_ADC_ConfigChannel(&AdcHandle, &adcConfig) != HAL_OK)
     {
 		Error_Handler();
     }
+	
+	/* Compute the prescaler value to have TIM3 counter clock equal to 16000000 Hz */
+    uwPrescalerValue = (uint32_t)(SystemCoreClock / 16000000) - 1;
+     
+	/* Configuração  do periférico TIM3 como PWM
+        + Prescaler = (SystemCoreClock / 16000000) - 1
+        + Period = (666 - 1)
+        + ClockDivision = 0
+        + Counter direction = Up
+	*/
+	pwmTimHandle.Instance = TIM2;
+
+	pwmTimHandle.Init.Prescaler         = uwPrescalerValue;
+	pwmTimHandle.Init.Period            = PERIOD_VALUE;
+	pwmTimHandle.Init.ClockDivision     = 0;
+	pwmTimHandle.Init.CounterMode       = TIM_COUNTERMODE_UP;
+	pwmTimHandle.Init.RepetitionCounter = 0;
+	HAL_TIM_PWM_Init(&pwmTimHandle);
+
+	/* Configure the PWM channels*/
+	pwmConfig.OCMode       = TIM_OCMODE_PWM1;
+	pwmConfig.OCPolarity   = TIM_OCPOLARITY_HIGH;
+	pwmConfig.OCFastMode   = TIM_OCFAST_DISABLE;
+	pwmConfig.OCNPolarity  = TIM_OCNPOLARITY_HIGH;
+	pwmConfig.OCIdleState  = TIM_OCIDLESTATE_RESET;
+	pwmConfig.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+
+	/* Set the pulse value for channel 1  PB4*/
+	pwmConfig.Pulse = PULSE1_VALUE;
+	HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+	
+	/* Apresentação do projeto */
+	HAL_UART_Transmit(&huart2, (uint8_t*)Handler1, 50, 100);
+	HAL_UART_Transmit(&huart2, (uint8_t*)Handler2, 50, 100);
+	
+	if (vBeta > 0)
+		sprintf(Handler3, "\n\r Carregador de Bateria v%d.%02d Beta %02d", vMajor, vMinor, vBeta);
+	else
+		sprintf(Handler3, "\n\r Carregador de Bateria v%d.%02d", vMajor, vMinor);
+	
+	HAL_UART_Transmit(&huart2, (uint8_t*)Handler3, 50, 100);
+	HAL_UART_Transmit(&huart2, (uint8_t*)Handler4, 50, 100);
+	HAL_UART_Transmit(&huart2, (uint8_t*)Handler5, 50, 100);
+	
+	sprintf(Buffer, "\n\n\n\r Digite os dados da bateria:\n\n\r");
+	HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, 50, 100);
       
 	/* Infinite loop */
     while (1)
 	{
 		if (dadosBateriaComputados)
 		{
+			if (!pwmStartado)
+			{
+				/* Start PWM ignal */
+				HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+				
+				pwmStartado = TRUE;
+			}
+			
 			if (!alarmeTemperatura)
 			{
 				if (leAD)
@@ -274,7 +344,7 @@ int main(void)
 					// Se atingiu a quantidade de amostras, calcula a media
 					if (contLeAD == QNTD_DE_AMOSTRAS_P_MEDIA)
 					{
-						tensaoMedia = tensaoInstantanea / QNTD_DE_AMOSTRAS_P_MEDIA;
+						tensaoMedia = tensaoInstantanea / QNTD_DE_AMOSTRAS_P_MEDIA;						
 						correnteMedia = correnteInstantanea / QNTD_DE_AMOSTRAS_P_MEDIA;
 						temperaturaMedia = temperaturaInstantanea / QNTD_DE_AMOSTRAS_P_MEDIA;
 						
@@ -287,7 +357,48 @@ int main(void)
 					
 					leAD = FALSE;	// Desabilita leitura dos canais do A/D
 				}
+				
+				switch(fase)
+				{
+					case FASE_A:
+						if (tensaoMedia < tensaoCarga)
+						{
+							if(correnteMedia < correnteCarga)
+							{
+								//Aumenta duty cicle
+							}
+							else if (correnteMedia > correnteCarga)
+							{
+								//Diminui duty cicle
+							}
+						}
+						else
+							fase = FASE_B;
+						break;
+					
+					case FASE_B:
+						if (correnteMedia > correnteCarga)
+						{
+							if (tensaoMedia < tensaoCarga)
+							{
+								// Aumenta duty cicle
+							}
+							else if (tensaoMedia > tensaoCarga)
+							{
+								// Diminui duty cicle
+							}
+						}
+						break;
+					
+					case FASE_C:
+						// Diminui duty cicle para 20%
+						break;
+				}
 			}
+		}
+		else
+		{
+			HAL_UART_Receive(&huart2, (uint8_t*)Buffer, 50, 1000);
 		}
 	}
 
