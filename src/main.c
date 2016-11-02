@@ -27,6 +27,11 @@ ADC_HandleTypeDef    AdcHandle;
 /* ADC channel configuration structure declaration */
 ADC_ChannelConfTypeDef   sConfig;
 
+/* Variáveis para armazenamento da versão */
+unsigned char vMajor = 1;
+unsigned char vMinor = 0;
+unsigned char vBeta = 1;
+
 /* Variáveis pra controle da base de tempo */
 unsigned char dezMiliSeg = 0;
 unsigned char segundos = 0;
