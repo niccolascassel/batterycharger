@@ -17,14 +17,18 @@
 
 #define	QNTD_DE_AMOSTRAS_P_MEDIA	10
 
-#define	RESOLUCAO_AD			4096
-#define	VREF					3.3
-#define	TENSAO_MAXIMA			14.4
-#define	CORRENTE_MAXIMA			1
-#define	RELACAO_TENSAO         	TENSAO_MAXIMA / VREF
-#define	RELACAO_CORRENTE        4
-// Tem que ensaiar o LM35
-//#define	RELACAO_TEMPERATURA
+#define VREF	3.3
+
+/* Valores referentes à medida de tensão da bateria */
+#define	VBAT_RES_ALTO	39000
+#define	VBAT_RES_BAIXO	10000
+#define	VBAT_RELACAO	VBAT_RES_BAIXO / (VBAT_RES_ALTO + VBAT_RES_BAIXO);
+
+/* Valores referentes à medida de corrente */
+#define	CORRENTE_MAXIMA		1
+
+/* Valores referentes à medida de temperatura */
+#define	VARIACAO_LM35		0.01
 
 /* Fases do processo de carga */
 #define	FASE_A	0x0A

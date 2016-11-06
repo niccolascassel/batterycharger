@@ -1,7 +1,7 @@
 # batterycharger
 Projeto para o Grau B da cadeira de Circuito Microprocessados I
 
-OBS.: Este projeto foi criado para ser compilado através do compilador Keil uVision 5
+OBS.: Este projeto foi criado no ambiente do compilador Keil uVision 5
 
 Autores: Níccolas F. Cassel e Ingridt Ayres
 Kit de Avaliação da ´serie STM32 - NUCLEO F072RB
