@@ -141,10 +141,10 @@ void USART2_IRQHandler(void)
 	HAL_UART_IRQHandler(&huart2);
 }
 
-void TIM3_IRQHandler(void)
+void TIM2_IRQHandler(void)
 {
 	HAL_TIM_IRQHandler(&TimHandle);
-}
+} 
 
 /**
   * @}

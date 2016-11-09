@@ -39,21 +39,21 @@ unsigned char vMinor = 0;
 unsigned char vBeta = 2;
 
 /* Variáveis pra controle da base de tempo */
-unsigned char dezMiliSeg = 0;
-unsigned char segundos = 0;
-unsigned char minutos = 0;
+volatile unsigned char dezMiliSeg = 0;
+volatile unsigned char segundos = 0;
+volatile unsigned char minutos = 0;
 
 /* Variáveis de controle do processo de carga */
-unsigned char leAD = FALSE;
+volatile unsigned char leAD = FALSE;
 unsigned char contLeAD = 0;
-unsigned char avisoTemperatura = FALSE;
-unsigned char alarmeTemperatura = FALSE;
-unsigned char fase = FASE_A;
+volatile unsigned char avisoTemperatura = FALSE;
+volatile unsigned char alarmeTemperatura = FALSE;
+volatile unsigned char fase = FASE_A;
 unsigned char tensaoCarga = 0;
 unsigned char tensaoFlutuacao = 0;
 unsigned char correnteCarga = 0;
-unsigned char temperaturaAviso = 0;
-unsigned char temperaturaAlarme = 0;
+volatile unsigned char temperaturaAviso = 0;
+volatile unsigned char temperaturaAlarme = 0;
 unsigned char pwmStartado = FALSE;
 
 /* Variáveis para armazenamento dos valores pelo A/D */
@@ -62,9 +62,9 @@ unsigned char tensaoMedia = 0;
 unsigned char correnteInstantanea = 0;
 unsigned char correnteMedia = 0;
 unsigned char temperaturaInstantanea = 0;
-unsigned char temperaturaMedia = 0;
+volatile unsigned char temperaturaMedia = 0;
 unsigned char dadosBateriaComputados = TRUE;
-unsigned char tempoSobreaquecimento = 0;
+volatile unsigned char tempoSobreaquecimento = 0;
 
 /* Variáveis para amostragem dos valores médios da grandezas monitoradas */
 double tensao = 0;
@@ -98,7 +98,10 @@ int main(void)
 	/* Habilita o Clock no port do led,  função definida em stm32f0xx_hal_rcc.h*/
 	__GPIOA_CLK_ENABLE();
 	
-	/* ADC1 Channels 0, 1 and 4 GPIO pin configuration */
+	//    PA0     ------> ADC CH0
+	//    PA1     ------> ADC CH1
+	//    PA4     ------> ADC CH4
+	/* Configura os pinos GPIOs  para a função alternativa de canais de A/D - CH0, CH1 e CH4 */
 	GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_4;
 	GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -107,7 +110,7 @@ int main(void)
 	
 	//    PA2     ------> USART2_TX
 	//    PA3     ------> USART2_RX
-    /*Configura os pinos GPIOs  para a função alternativa de RX e TX */
+    /* Configura os pinos GPIOs  para a função alternativa de RX e TX */
 	GPIO_InitStruct.Pin       = GPIO_PIN_2 | GPIO_PIN_3;
 	GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
 	GPIO_InitStruct.Pull      = GPIO_NOPULL;
@@ -115,16 +118,26 @@ int main(void)
 	GPIO_InitStruct.Alternate = GPIO_AF1_USART2;
     
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-	/* Habilita o Clock no port do led,  função definida em stm32f0xx_hal_rcc.h*/
-	__GPIOA_CLK_ENABLE();
-
+	
 	/* Configura  o pino do led como output push-pull */
 	GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
 	GPIO_InitStruct.Speed = GPIO_SPEED_HIGH;
 	GPIO_InitStruct.Pin   = GPIO_PIN_5;
 
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+	
+	/* Habilita o Clock no port C,  função definida em stm32f0xx_hal_rcc.h*/
+    __GPIOB_CLK_ENABLE();
+
+	//    PB4     ------> TIM3_CH1
+    /* Configura os pinos GPIOs  para a função alternativa de saída PWM - TIM3_CH1 */
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM3;
+    GPIO_InitStruct.Pin = GPIO_PIN_4;
+	
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 	
 	/* habilita o clock da  USART2 */
 	__USART2_CLK_ENABLE();
@@ -153,28 +166,6 @@ int main(void)
     HAL_NVIC_SetPriority(USART2_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(USART2_IRQn);
 	
-	/* Peripheral clock enable */
-	__TIM3_CLK_ENABLE();
-	
-	/* Configura a variável prescaler com valor de contagem  para 10000 Hz */
-	uwPrescalerValue = (uint32_t)(SystemCoreClock / 10000) - 1;
-
-	/* Configura TIM1 */
-	TimHandle.Instance = TIM3;
-	TimHandle.Init.Period            = 100 - 1;
-	TimHandle.Init.Prescaler         = uwPrescalerValue;
-	TimHandle.Init.ClockDivision     = 0;
-	TimHandle.Init.CounterMode       = TIM_COUNTERMODE_UP;
-	TimHandle.Init.RepetitionCounter = 0;
-	HAL_TIM_Base_Init(&TimHandle);
-
-	/* Configura a geração de interrupção para o timer 1 */
-	HAL_TIM_Base_Start_IT(&TimHandle);
-	
-	/* Peripheral TIMER 2 interrupt init*/    
-	HAL_NVIC_SetPriority(TIM3_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(TIM3_IRQn);
-	
 	/* Habilita o clock do ADC 1*/
 	__ADC1_CLK_ENABLE();
 
@@ -196,7 +187,6 @@ int main(void)
 		*/
 
 	AdcHandle.Instance = ADC1;
-
     AdcHandle.Init.ClockPrescaler        = ADC_CLOCK_ASYNC;
     AdcHandle.Init.LowPowerAutoWait      = DISABLE;
     AdcHandle.Init.LowPowerAutoPowerOff  = DISABLE;
@@ -233,7 +223,7 @@ int main(void)
 		Error_Handler();
     }
 
-    /* Seleciona o canal analogico (Channel 0) */
+    /* Seleciona o canal analogico (Channel 1) */
     adcConfig.Channel      =  ADC_CHANNEL_1;
     adcConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
     adcConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
@@ -243,7 +233,7 @@ int main(void)
 		Error_Handler();
     }
 
-    /* Seleciona o canal analogico (Channel 0) */
+    /* Seleciona o canal analogico (Channel 4) */
     adcConfig.Channel      =  ADC_CHANNEL_4;
     adcConfig.Rank         = ADC_RANK_CHANNEL_NUMBER;
     adcConfig.SamplingTime = ADC_SAMPLETIME_13CYCLES_5;
@@ -253,22 +243,26 @@ int main(void)
 		Error_Handler();
     }
 	
+	/* Habilita o clock do Timer 3*/
+    __TIM3_CLK_ENABLE();
+	
 	/* Compute the prescaler value to have TIM3 counter clock equal to 16000000 Hz */
     uwPrescalerValue = (uint32_t)(SystemCoreClock / 16000000) - 1;
-     
+
+
 	/* Configuração  do periférico TIM3 como PWM
         + Prescaler = (SystemCoreClock / 16000000) - 1
         + Period = (666 - 1)
         + ClockDivision = 0
         + Counter direction = Up
 	*/
-	pwmTimHandle.Instance = TIM2;
-
+	pwmTimHandle.Instance = TIM3;
 	pwmTimHandle.Init.Prescaler         = uwPrescalerValue;
 	pwmTimHandle.Init.Period            = PERIOD_VALUE;
 	pwmTimHandle.Init.ClockDivision     = 0;
 	pwmTimHandle.Init.CounterMode       = TIM_COUNTERMODE_UP;
 	pwmTimHandle.Init.RepetitionCounter = 0;
+	
 	HAL_TIM_PWM_Init(&pwmTimHandle);
 
 	/* Configure the PWM channels*/
@@ -282,6 +276,28 @@ int main(void)
 	/* Set the pulse value for channel 1  PB4*/
 	pwmConfig.Pulse = PULSE1_VALUE;
 	HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+   
+	/* Peripheral clock enable */
+	__TIM2_CLK_ENABLE();
+	
+	/* Configura a variável prescaler com valor de contagem  para 10000 Hz */
+	uwPrescalerValue = (uint32_t)(SystemCoreClock / 10000) - 1;
+
+	/* Configura TIM1 */
+	TimHandle.Instance = TIM2;
+	TimHandle.Init.Period            = 100 - 1;
+	TimHandle.Init.Prescaler         = uwPrescalerValue;
+	TimHandle.Init.ClockDivision     = 0;
+	TimHandle.Init.CounterMode       = TIM_COUNTERMODE_UP;
+	TimHandle.Init.RepetitionCounter = 0;
+	HAL_TIM_Base_Init(&TimHandle);
+
+	/* Configura a geração de interrupção para o timer 1 */
+	HAL_TIM_Base_Start_IT(&TimHandle);
+	
+	/* Peripheral TIMER 2 interrupt init*/    
+	HAL_NVIC_SetPriority(TIM2_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(TIM2_IRQn);
 	
 	/* Apresentação do projeto */
 	HAL_UART_Transmit(&huart2, (uint8_t*)Handler1, 50, 100);
@@ -406,7 +422,7 @@ int main(void)
 }
 
 // Declaração Função de tratamento da Interrupção de Timer 
-// Esta função vai ser chamada quando ocorrer o evento de interrupção do Timer 3
+// Esta função vai ser chamada quando ocorrer o evento de interrupção do Timer 1
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	leAD = TRUE;	// Habilita leitura dos canais do A/D
