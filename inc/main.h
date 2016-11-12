@@ -12,7 +12,7 @@
 #define BUFFERSIZE	50
 
 #define  PERIOD_VALUE       (uint32_t)(16000 - 1)  /* Period Value  */
-#define  PULSE1_VALUE       (uint32_t)(PERIOD_VALUE/2)        /* Capture Compare 1 Value  */
+#define  PULSE1_VALUE       (uint32_t)(PERIOD_VALUE/10)        /* Capture Compare 1 Value  */
 
 #define	QNTD_DE_AMOSTRAS_P_MEDIA	10
 

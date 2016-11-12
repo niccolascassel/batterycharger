@@ -11,6 +11,7 @@
 #include <stdio.h>
 
 #include "main.h"
+#include "strings.h"
 
 /* Struct de configuração da comunicação serial definido em  stm32f0xx_hal_uart.h*/
 UART_HandleTypeDef huart2;
@@ -36,7 +37,7 @@ TIM_OC_InitTypeDef pwmConfig;
 /* Variáveis para armazenamento da versão */
 unsigned char vMajor = 1;
 unsigned char vMinor = 0;
-unsigned char vBeta = 2;
+unsigned char vBeta = 3;
 
 /* Variáveis pra controle da base de tempo */
 volatile unsigned char dezMiliSeg = 0;
@@ -49,11 +50,11 @@ unsigned char contLeAD = 0;
 volatile unsigned char avisoTemperatura = FALSE;
 volatile unsigned char alarmeTemperatura = FALSE;
 volatile unsigned char fase = FASE_A;
-unsigned char tensaoCarga = 0;
-unsigned char tensaoFlutuacao = 0;
-unsigned char correnteCarga = 0;
-volatile unsigned char temperaturaAviso = 0;
-volatile unsigned char temperaturaAlarme = 0;
+double tensaoCarga = 0;
+double tensaoFlutuacao = 0;
+double correnteCarga = 0;
+volatile double temperaturaAviso = 0;
+volatile double temperaturaAlarme = 0;
 unsigned char pwmStartado = FALSE;
 
 /* Variáveis para armazenamento dos valores pelo A/D */
@@ -63,23 +64,18 @@ unsigned char correnteInstantanea = 0;
 unsigned char correnteMedia = 0;
 unsigned char temperaturaInstantanea = 0;
 volatile unsigned char temperaturaMedia = 0;
-unsigned char dadosBateriaComputados = TRUE;
-volatile unsigned char tempoSobreaquecimento = 0;
+unsigned char dadosBateriaComputados = FALSE;
+volatile int tempoSobreaquecimento = 0;
 
 /* Variáveis para amostragem dos valores médios da grandezas monitoradas */
 double tensao = 0;
 double corrente = 0;
 double temperatura = 0;
 
-/* Cabeçalho de apresentação do projeto */
-char Handler1[BUFFERSIZE] = "\n\r**********************************************\0";
-char Handler2[BUFFERSIZE] = "\n\r Projeto GB - Circuitos Microprocessados\0";
-char Handler3[BUFFERSIZE];
-char Handler4[BUFFERSIZE] = "\n\r Autores: Niccolas F. Cassel e Ingirdt Ayres\0";
-char Handler5[BUFFERSIZE] = "\n\r**********************************************\0";
-
 /* Buffer da comunicacao serial */
 char Buffer[BUFFERSIZE];
+volatile uint8_t  pacoteSerial[11];
+volatile unsigned char pacoteRecebido = FALSE;
 
 /* Declaração da variável Prescaler */
 uint32_t uwPrescalerValue = 0;
@@ -300,20 +296,23 @@ int main(void)
     HAL_NVIC_EnableIRQ(TIM2_IRQn);
 	
 	/* Apresentação do projeto */
-	HAL_UART_Transmit(&huart2, (uint8_t*)Handler1, 50, 100);
-	HAL_UART_Transmit(&huart2, (uint8_t*)Handler2, 50, 100);
+	HAL_UART_Transmit(&huart2, (uint8_t*)HEADER1, sizeof(HEADER1), 100);
+	HAL_UART_Transmit(&huart2, (uint8_t*)HEADER2, sizeof(HEADER2), 100);
 	
 	if (vBeta > 0)
-		sprintf(Handler3, "\n\r Carregador de Bateria v%d.%02d Beta %02d", vMajor, vMinor, vBeta);
+		sprintf(Buffer, "\n\r Carregador de Bateria v%d.%02d Beta %02d", vMajor, vMinor, vBeta);
 	else
-		sprintf(Handler3, "\n\r Carregador de Bateria v%d.%02d", vMajor, vMinor);
+		sprintf(Buffer, "\n\r Carregador de Bateria v%d.%02d", vMajor, vMinor);
 	
-	HAL_UART_Transmit(&huart2, (uint8_t*)Handler3, 50, 100);
-	HAL_UART_Transmit(&huart2, (uint8_t*)Handler4, 50, 100);
-	HAL_UART_Transmit(&huart2, (uint8_t*)Handler5, 50, 100);
-	
-	sprintf(Buffer, "\n\n\n\r Digite os dados da bateria:\n\n\r");
 	HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, 50, 100);
+	
+	for(unsigned char i = 0; i < sizeof(Buffer)/sizeof(Buffer[0]); i++)
+		Buffer[i] = '\0';
+	
+	HAL_UART_Transmit(&huart2, (uint8_t*)HEADER3, sizeof(HEADER3), 100);
+	HAL_UART_Transmit(&huart2, (uint8_t*)HEADER4, sizeof(HEADER4), 100);
+	
+	HAL_UART_Transmit(&huart2, (uint8_t*)SOLICITA_CONFIGURACAO, sizeof(SOLICITA_CONFIGURACAO), 100);
       
 	/* Infinite loop */
     while (1)
@@ -413,9 +412,141 @@ int main(void)
 			}
 		}
 		else
-		{
-			HAL_UART_Receive(&huart2, (uint8_t*)Buffer, 50, 1000);
+		{	
+			// Se recebeu um pacote pela serial, verifica o que foi que recebeu
+			if (pacoteRecebido)
+			{
+				char cmd[6];
+				char value[5];
+				
+				// Copia as posições referentes ao comando
+				for(unsigned char i = 0; i < sizeof(cmd)/sizeof(cmd[0]); i++)
+					cmd[i] = pacoteSerial[i];
+				
+				// Copia as posições referentes ao valor
+				for(unsigned char i = 0; i < sizeof(value)/sizeof(value[0]); i++)
+					value[i] = pacoteSerial[i + sizeof(cmd)/sizeof(cmd[0])];
+						
+				// Verifica se o comando recebido é de configuracao de tensao de flutuação
+				if (!strcmp(cmd, TENSAO_FLUTUACAO)) 
+				{
+					// Armazenamento da tensao de flutuacao
+					//HAL_UART_Transmit(&huart2, (uint8_t*)TENSAO_FLUTUACAO, sizeof(TENSAO_FLUTUACAO), 100);
+					// Converte e copia o valor para variável referente
+					sscanf(value, "%lf", &tensaoFlutuacao);
+					
+					// Se o valor enviado pela serial para tensão de flutuação for zero. Não armazena.
+					if (tensaoFlutuacao == 0)
+						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
+					else
+					{
+						HAL_UART_Transmit(&huart2, (uint8_t*)TENSAO_FLUTUACAO_CONFIGURADA, sizeof(TENSAO_FLUTUACAO_CONFIGURADA), 100);
+						
+						sprintf(Buffer, "\n\r%.02lfV", tensaoFlutuacao); 
+						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+					}
+				}
+				// Se não, verifica se o comando recebido é de configuracao de tensao de carga
+				else if (!strcmp(cmd, TENSAO_CARGA))
+				{
+					// Armazenamento da tensao de carga
+					//HAL_UART_Transmit(&huart2, (uint8_t*)TENSAO_CARGA, sizeof(TENSAO_CARGA), 100);
+					// Converte e copia o valor para variável referente
+					sscanf(value, "%lf", &tensaoCarga);
+					
+					// Se o valor enviado pela serial para tensão de carga for zero. Não armazena.
+					if (tensaoCarga == 0)
+						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
+					else
+					{
+						HAL_UART_Transmit(&huart2, (uint8_t*)TENSAO_CARGA_CONFIGURADA, sizeof(TENSAO_CARGA_CONFIGURADA), 100);
+						
+						sprintf(Buffer, "\n\r%.02lfV", tensaoCarga); 
+						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+					}
+				}
+				// Se não, verifica se o comando recebido é de configuracao de temperatura para sinalização de sobreaquecimento
+				else if (!strcmp(cmd, TEMP_SOBREAQ))
+				{
+					// Armazenamento da temperatura de sobreaquecimento					
+					//HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_SOBREAQ, sizeof(TEMP_SOBREAQ), 100);
+					// Converte e copia o valor para variável referente
+					sscanf(value, "%lf", &temperaturaAviso);
+					
+					// Se o valor enviado pela serial para temperatura de aviso de sobreaquecimento for zero. Não armazena.
+					if (temperaturaAviso == 0)
+						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
+					else
+					{
+						HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_SOBREAQ_CONFIGURADA, sizeof(TEMP_SOBREAQ_CONFIGURADA), 100);
+						
+						sprintf(Buffer, "\n\r%.02lfºC", temperaturaAviso); 
+						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+					}
+				}
+				// Se não, verifica se o comando recebido é de configuracao de temperatura para sinalização de alarme
+				else if (!strcmp(cmd, TEMP_ALARME))
+				{
+					// Armazenamento da temperatura de alarme
+					//HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_ALARME, sizeof(TEMP_ALARME), 100);	
+					// Converte e copia o valor para variável referente					
+					sscanf(value, "%lf", &temperaturaAlarme);
+					
+					// Se o valor enviado pela serial para temperatura de alarme de sobreaquecimentolutuação for zero. Não armazena.
+					if (temperaturaAlarme == 0)
+						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
+					else
+					{
+						HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_ALARME_CONFIGURADA, sizeof(TEMP_ALARME_CONFIGURADA), 100);
+						
+						sprintf(Buffer, "\n\r%.02lfºC", temperaturaAlarme); 
+						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+					}
+				}
+				// Se não, verifica se o comando recebido é de configuracao do tempo de sobreaquecimento.
+				else if (!strcmp(cmd, SOBREAQ_TIME))
+				{
+					// Armazenamento do tempo de sobreaquecimento
+					//HAL_UART_Transmit(&huart2, (uint8_t*)SOBREAQ_TIME, sizeof(SOBREAQ_TIME), 100);
+					// Converte e copia o valor para variável referente
+					sscanf(value, "%d", &tempoSobreaquecimento);
+					
+					// Se o valor enviado pela serial para tempo de sobreaquecimento for zero. Não armazena.
+					if (tempoSobreaquecimento == 0)
+						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
+					else
+					{
+						HAL_UART_Transmit(&huart2, (uint8_t*)SOBREAQ_TIME_CONFIGURADO, sizeof(SOBREAQ_TIME_CONFIGURADO), 100);
+						
+						int tempoMin = tempoSobreaquecimento / 60;
+						
+						sprintf(Buffer, "\n\r%02d:%02d", tempoMin, tempoSobreaquecimento - (tempoMin * 60)); 
+						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+					}
+				}
+				else // Se não, indica que o comando é inválido
+				{
+					// Comando inválido
+					//HAL_UART_Transmit(&huart2, (uint8_t*)INVALIDO, sizeof(INVALIDO), 100);
+					HAL_UART_Transmit(&huart2, (uint8_t*)COMANDO_INVALIDO, sizeof(COMANDO_INVALIDO), 100);
+				}
+				
+				// Limpa o buffer
+				for(unsigned char i = 0; i < sizeof(Buffer)/sizeof(Buffer[0]); i++)
+					Buffer[i] = '\0';
+							
+				pacoteRecebido = FALSE;
+			}
+			
+			// Se todos os valores foram computados, libera inicio do controle
+			if (tensaoFlutuacao > 0 && tensaoCarga > 0 && temperaturaAviso > 0 && temperaturaAlarme > 0 && tempoSobreaquecimento > 0)
+			{
+				HAL_UART_Transmit(&huart2, (uint8_t*)DADOS_COMPUTADOS, sizeof(DADOS_COMPUTADOS), 100);
+				dadosBateriaComputados = TRUE;
+			}
 		}
+		
+		HAL_UART_Receive_IT(&huart2, (uint8_t*)pacoteSerial, sizeof(pacoteSerial));
 	}
 
     return 0;
@@ -470,6 +601,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			minutos = 0;
 		}
 	}
+}
+
+// Declaração Função de tratamento da Interrupção de Recepção da USART2 
+// Esta função vai ser chamada quando ocorrer o evento de interrupção do canal de recepção da porta serial 2
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{ 
+	pacoteRecebido = TRUE;
 }
 
 /* Função de configuração do clock */
