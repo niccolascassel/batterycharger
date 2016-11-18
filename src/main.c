@@ -53,9 +53,8 @@ volatile unsigned char fase = FASE_A;
 double tensaoCarga = 0;
 double tensaoFlutuacao = 0;
 double correnteCarga = 0;
-volatile double temperaturaAviso = 0;
-volatile double temperaturaAlarme = 0;
-unsigned char pwmStartado = FALSE;
+double correnteFlutuacao = 0;
+volatile double temperaturaCarga = 0;
 
 /* Variáveis para armazenamento dos valores pelo A/D */
 unsigned char tensaoInstantanea = 0;
@@ -65,7 +64,6 @@ unsigned char correnteMedia = 0;
 unsigned char temperaturaInstantanea = 0;
 volatile unsigned char temperaturaMedia = 0;
 unsigned char dadosBateriaComputados = FALSE;
-volatile int tempoSobreaquecimento = 0;
 
 /* Variáveis para amostragem dos valores médios da grandezas monitoradas */
 double tensao = 0;
@@ -270,8 +268,11 @@ int main(void)
 	pwmConfig.OCNIdleState = TIM_OCNIDLESTATE_RESET;
 
 	/* Set the pulse value for channel 1  PB4*/
-	pwmConfig.Pulse = PULSE1_VALUE;
+	pwmConfig.Pulse = 1;
 	HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+	
+	/* Start PWM ignal */
+	HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
    
 	/* Peripheral clock enable */
 	__TIM2_CLK_ENABLE();
@@ -319,14 +320,6 @@ int main(void)
 	{
 		if (dadosBateriaComputados)
 		{
-			if (!pwmStartado)
-			{
-				/* Start PWM ignal */
-				HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
-				
-				pwmStartado = TRUE;
-			}
-			
 			if (!alarmeTemperatura)
 			{
 				if (leAD)
@@ -380,11 +373,23 @@ int main(void)
 						{
 							if(correnteMedia < correnteCarga)
 							{
-								//Aumenta duty cicle
+								if ((pwmConfig.Pulse + PULSE1_VALUE) <= PERIOD_VALUE)
+								{
+									// Incrementa duty cicle em 10%
+									pwmConfig.Pulse += PULSE1_VALUE;
+									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+								}
 							}
 							else if (correnteMedia > correnteCarga)
 							{
-								//Diminui duty cicle
+								if ((pwmConfig.Pulse - PULSE1_VALUE) >= 1)
+								{
+									//Decrementa duty cicle em 10%
+									pwmConfig.Pulse -= PULSE1_VALUE;
+									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+								}
 							}
 						}
 						else
@@ -396,17 +401,32 @@ int main(void)
 						{
 							if (tensaoMedia < tensaoCarga)
 							{
-								// Aumenta duty cicle
+								if ((pwmConfig.Pulse + PULSE1_VALUE) <= PERIOD_VALUE)
+								{
+									// Incrementa duty cicle em 10%
+									pwmConfig.Pulse += PULSE1_VALUE;
+									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+								}
 							}
 							else if (tensaoMedia > tensaoCarga)
 							{
-								// Diminui duty cicle
+								if ((pwmConfig.Pulse - PULSE1_VALUE) >= 1)
+								{
+									//Decrementa duty cicle em 10%
+									pwmConfig.Pulse -= PULSE1_VALUE;
+									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+								}
 							}
 						}
 						break;
 					
 					case FASE_C:
 						// Diminui duty cicle para 20%
+						pwmConfig.Pulse = PULSE1_VALUE * 2;
+						HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+						HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
 						break;
 				}
 			}
@@ -465,69 +485,63 @@ int main(void)
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 					}
 				}
-				// Se não, verifica se o comando recebido é de configuracao de temperatura para sinalização de sobreaquecimento
-				else if (!strcmp(cmd, TEMP_SOBREAQ))
+				// Se não, verifica se o comando recebido é de configuracao de corrente de carga.
+				else if (!strcmp(cmd, CORRENTE_CARGA))
 				{
-					// Armazenamento da temperatura de sobreaquecimento					
-					//HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_SOBREAQ, sizeof(TEMP_SOBREAQ), 100);
-					// Converte e copia o valor para variável referente
-					sscanf(value, "%lf", &temperaturaAviso);
+					sscanf(value, "%lf", &correnteCarga);
 					
 					// Se o valor enviado pela serial para temperatura de aviso de sobreaquecimento for zero. Não armazena.
-					if (temperaturaAviso == 0)
+					if (correnteCarga == 0)
 						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
 					else
 					{
-						HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_SOBREAQ_CONFIGURADA, sizeof(TEMP_SOBREAQ_CONFIGURADA), 100);
+						HAL_UART_Transmit(&huart2, (uint8_t*)CORRENTE_CARGA_CONFIGURADA, sizeof(CORRENTE_CARGA_CONFIGURADA), 100);
 						
-						sprintf(Buffer, "\n\r%.02lfºC", temperaturaAviso); 
+						sprintf(Buffer, "\n\r%.02lfA", correnteCarga); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 					}
 				}
-				// Se não, verifica se o comando recebido é de configuracao de temperatura para sinalização de alarme
-				else if (!strcmp(cmd, TEMP_ALARME))
+				// Se não, verifica se o comando recebido é de configuracao de corrente de flutuação.
+				else if (!strcmp(cmd, CORRENTE_FLUTUACAO))
 				{
 					// Armazenamento da temperatura de alarme
 					//HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_ALARME, sizeof(TEMP_ALARME), 100);	
 					// Converte e copia o valor para variável referente					
-					sscanf(value, "%lf", &temperaturaAlarme);
+					sscanf(value, "%lf", &correnteFlutuacao);
 					
 					// Se o valor enviado pela serial para temperatura de alarme de sobreaquecimentolutuação for zero. Não armazena.
-					if (temperaturaAlarme == 0)
+					if (correnteFlutuacao == 0)
 						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
 					else
 					{
-						HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_ALARME_CONFIGURADA, sizeof(TEMP_ALARME_CONFIGURADA), 100);
+						HAL_UART_Transmit(&huart2, (uint8_t*)CORRENTE_FLUTUACAO_CONFIGURADA, sizeof(CORRENTE_FLUTUACAO_CONFIGURADA), 100);
 						
-						sprintf(Buffer, "\n\r%.02lfºC", temperaturaAlarme); 
+						sprintf(Buffer, "\n\r%.02lfA", correnteFlutuacao); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 					}
 				}
-				// Se não, verifica se o comando recebido é de configuracao do tempo de sobreaquecimento.
-				else if (!strcmp(cmd, SOBREAQ_TIME))
+				// Se não, verifica se o comando recebido é de configuracao do temperatura de carga.
+				else if (!strcmp(cmd, TEMP_CARGA))
 				{
 					// Armazenamento do tempo de sobreaquecimento
 					//HAL_UART_Transmit(&huart2, (uint8_t*)SOBREAQ_TIME, sizeof(SOBREAQ_TIME), 100);
 					// Converte e copia o valor para variável referente
-					sscanf(value, "%d", &tempoSobreaquecimento);
+					sscanf(value, "%lf", &temperaturaCarga);
 					
 					// Se o valor enviado pela serial para tempo de sobreaquecimento for zero. Não armazena.
-					if (tempoSobreaquecimento == 0)
+					if (temperaturaCarga == 0)
 						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
 					else
 					{
-						HAL_UART_Transmit(&huart2, (uint8_t*)SOBREAQ_TIME_CONFIGURADO, sizeof(SOBREAQ_TIME_CONFIGURADO), 100);
+						HAL_UART_Transmit(&huart2, (uint8_t*)TEMP_CARGA_CONFIGURADA, sizeof(TEMP_CARGA_CONFIGURADA), 100);
 						
-						int tempoMin = tempoSobreaquecimento / 60;
-						
-						sprintf(Buffer, "\n\r%02d:%02d", tempoMin, tempoSobreaquecimento - (tempoMin * 60)); 
+						sprintf(Buffer, "\n\r%.02lfºC", temperaturaCarga); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 					}
 				}
 				else // Se não, indica que o comando é inválido
 				{
 					// Comando inválido
-					//HAL_UART_Transmit(&huart2, (uint8_t*)INVALIDO, sizeof(INVALIDO), 100);
 					HAL_UART_Transmit(&huart2, (uint8_t*)COMANDO_INVALIDO, sizeof(COMANDO_INVALIDO), 100);
 				}
 				
@@ -539,7 +553,7 @@ int main(void)
 			}
 			
 			// Se todos os valores foram computados, libera inicio do controle
-			if (tensaoFlutuacao > 0 && tensaoCarga > 0 && temperaturaAviso > 0 && temperaturaAlarme > 0 && tempoSobreaquecimento > 0)
+			if (tensaoFlutuacao > 0 && tensaoCarga > 0 && correnteCarga > 0 && correnteFlutuacao > 0 && temperaturaCarga > 0)
 			{
 				HAL_UART_Transmit(&huart2, (uint8_t*)DADOS_COMPUTADOS, sizeof(DADOS_COMPUTADOS), 100);
 				dadosBateriaComputados = TRUE;
@@ -582,7 +596,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			{
 				minutos++;
 				
-				if (minutos >= tempoSobreaquecimento)
+				if (minutos >= TEMPO_SOBREAQUECIMENTO)
 				{
 					minutos = 0;
 					alarmeTemperatura = TRUE;
@@ -590,9 +604,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			}
 		}
 		
-		if (temperaturaMedia >= temperaturaAlarme)
+		if (temperaturaMedia >= (temperaturaCarga * 1.1))
 			alarmeTemperatura = TRUE;
-		else if (temperaturaMedia >= temperaturaAviso)
+		else if (temperaturaMedia >= temperaturaCarga)
 			avisoTemperatura = TRUE;
 		else
 		{

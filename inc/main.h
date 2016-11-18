@@ -11,8 +11,8 @@
 /* Size of buffer */
 #define BUFFERSIZE	50
 
-#define  PERIOD_VALUE       (uint32_t)(16000 - 1)  /* Period Value  */
-#define  PULSE1_VALUE       (uint32_t)(PERIOD_VALUE/10)        /* Capture Compare 1 Value  */
+#define  PERIOD_VALUE       (uint32_t)(16000 - 1)  			/* Período do sinal PWM  */
+#define  PULSE1_VALUE       (uint32_t)(PERIOD_VALUE/10)     /* Duty Cicle do sinal PWM = 10% */
 
 #define	QNTD_DE_AMOSTRAS_P_MEDIA	10
 
@@ -33,6 +33,8 @@
 #define	FASE_A	0x0A
 #define	FASE_B	0x0B
 #define	FASE_C	0x0C
+
+#define	TEMPO_SOBREAQUECIMENTO	10
 
 #endif /* __MAIN_H */
 
