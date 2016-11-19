@@ -37,10 +37,11 @@ TIM_OC_InitTypeDef pwmConfig;
 /* Variáveis para armazenamento da versão */
 unsigned char vMajor = 1;
 unsigned char vMinor = 0;
-unsigned char vBeta = 3;
+unsigned char vBeta = 4;
 
 /* Variáveis pra controle da base de tempo */
 volatile unsigned char dezMiliSeg = 0;
+volatile unsigned char quinhentosMiliseg = 0;
 volatile unsigned char segundos = 0;
 volatile unsigned char minutos = 0;
 
@@ -55,14 +56,16 @@ double tensaoFlutuacao = 0;
 double correnteCarga = 0;
 double correnteFlutuacao = 0;
 volatile double temperaturaCarga = 0;
+unsigned char aumentouDutyCicle = FALSE;
+unsigned char passoDutyCicle = 1;
 
-/* Variáveis para armazenamento dos valores pelo A/D */
-unsigned char tensaoInstantanea = 0;
-unsigned char tensaoMedia = 0;
-unsigned char correnteInstantanea = 0;
-unsigned char correnteMedia = 0;
-unsigned char temperaturaInstantanea = 0;
-volatile unsigned char temperaturaMedia = 0;
+/* Variáveis para armazenamento dos valores lidos pelo A/D */
+unsigned int tensaoInstantanea = 0;
+unsigned int tensaoMedia = 0;
+unsigned int correnteInstantanea = 0;
+unsigned int correnteMedia = 0;
+unsigned int temperaturaInstantanea = 0;
+volatile unsigned int temperaturaMedia = 0;
 unsigned char dadosBateriaComputados = FALSE;
 
 /* Variáveis para amostragem dos valores médios da grandezas monitoradas */
@@ -361,6 +364,13 @@ int main(void)
 						temperaturaInstantanea = 0;
 						
 						contLeAD = 0;
+						
+						tensao = (FUNDO_ESCALA_TENSAO / 4096) * (double)tensaoMedia;
+						corrente = (FUNDO_ESCALA_CORRENTE / 4096) * (double)correnteMedia;
+						temperatura = ((VREF / 4096) * (double)temperaturaMedia) / VARIACAO_LM35;
+						                                                        
+						sprintf(Buffer, "\n\r%.02lfV\t%.02lfA\t%.02lfºC", tensao, corrente, temperatura);  
+						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 					}
 					
 					leAD = FALSE;	// Desabilita leitura dos canais do A/D
@@ -373,52 +383,84 @@ int main(void)
 						{
 							if(correnteMedia < correnteCarga)
 							{
-								if ((pwmConfig.Pulse + PULSE1_VALUE) <= PERIOD_VALUE)
+								// Não permite que aumente o duty cicle se atingiu corrente máxima
+								if (correnteMedia < CORRENTE_MAXIMA_DIGITAL) 
 								{
-									// Incrementa duty cicle em 10%
-									pwmConfig.Pulse += PULSE1_VALUE;
-									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
-									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+									if (!aumentouDutyCicle)
+										passoDutyCicle *= 2;
+								
+									if ((pwmConfig.Pulse + (PULSE1_VALUE / passoDutyCicle)) < PERIOD_VALUE)
+									{
+										// Incrementa duty cicle
+										pwmConfig.Pulse += (PULSE1_VALUE / passoDutyCicle);
+										HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+										HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+										aumentouDutyCicle = TRUE;
+									}
 								}
 							}
 							else if (correnteMedia > correnteCarga)
 							{
-								if ((pwmConfig.Pulse - PULSE1_VALUE) >= 1)
+								if (aumentouDutyCicle)
+									passoDutyCicle *= 2;
+								
+								if ((pwmConfig.Pulse - (PULSE1_VALUE / passoDutyCicle)) > 1)
 								{
 									//Decrementa duty cicle em 10%
-									pwmConfig.Pulse -= PULSE1_VALUE;
+									pwmConfig.Pulse -= (PULSE1_VALUE / passoDutyCicle);
 									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
 									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+									aumentouDutyCicle = FALSE;
 								}
 							}
 						}
 						else
+						{
 							fase = FASE_B;
+							passoDutyCicle = 1;
+						}
 						break;
 					
 					case FASE_B:
 						if (correnteMedia > correnteCarga)
-						{
+						{	
 							if (tensaoMedia < tensaoCarga)
 							{
-								if ((pwmConfig.Pulse + PULSE1_VALUE) <= PERIOD_VALUE)
+								// Não permite que aumente o duty cicle se atingiu corrente máxima
+								if (correnteMedia < CORRENTE_MAXIMA_DIGITAL)
 								{
-									// Incrementa duty cicle em 10%
-									pwmConfig.Pulse += PULSE1_VALUE;
-									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
-									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+									if (!aumentouDutyCicle)
+										passoDutyCicle *= 2;
+									
+									if ((pwmConfig.Pulse + (PULSE1_VALUE / passoDutyCicle)) < PERIOD_VALUE)
+									{
+										// Incrementa duty cicle em 10%
+										pwmConfig.Pulse += (PULSE1_VALUE / passoDutyCicle);
+										HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+										HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+										aumentouDutyCicle = TRUE;
+									}
 								}
 							}
 							else if (tensaoMedia > tensaoCarga)
 							{
-								if ((pwmConfig.Pulse - PULSE1_VALUE) >= 1)
+								if (aumentouDutyCicle)
+									passoDutyCicle *= 2;
+								
+								if ((pwmConfig.Pulse - (PULSE1_VALUE / passoDutyCicle)) > 1)
 								{
 									//Decrementa duty cicle em 10%
-									pwmConfig.Pulse -= PULSE1_VALUE;
+									pwmConfig.Pulse -= (PULSE1_VALUE / passoDutyCicle);
 									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
 									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+									aumentouDutyCicle = FALSE;
 								}
 							}
+						}
+						else
+						{
+							fase = FASE_C;
+							passoDutyCicle = 1;
 						}
 						break;
 					
@@ -450,8 +492,6 @@ int main(void)
 				// Verifica se o comando recebido é de configuracao de tensao de flutuação
 				if (!strcmp(cmd, TENSAO_FLUTUACAO)) 
 				{
-					// Armazenamento da tensao de flutuacao
-					//HAL_UART_Transmit(&huart2, (uint8_t*)TENSAO_FLUTUACAO, sizeof(TENSAO_FLUTUACAO), 100);
 					// Converte e copia o valor para variável referente
 					sscanf(value, "%lf", &tensaoFlutuacao);
 					
@@ -459,18 +499,18 @@ int main(void)
 					if (tensaoFlutuacao == 0)
 						HAL_UART_Transmit(&huart2, (uint8_t*)VALOR_ZERO, sizeof(VALOR_ZERO), 100);
 					else
-					{
+					{						
 						HAL_UART_Transmit(&huart2, (uint8_t*)TENSAO_FLUTUACAO_CONFIGURADA, sizeof(TENSAO_FLUTUACAO_CONFIGURADA), 100);
 						
 						sprintf(Buffer, "\n\r%.02lfV", tensaoFlutuacao); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+						
+						tensaoFlutuacao = (4096 / FUNDO_ESCALA_TENSAO) * tensaoFlutuacao;
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao de tensao de carga
 				else if (!strcmp(cmd, TENSAO_CARGA))
 				{
-					// Armazenamento da tensao de carga
-					//HAL_UART_Transmit(&huart2, (uint8_t*)TENSAO_CARGA, sizeof(TENSAO_CARGA), 100);
 					// Converte e copia o valor para variável referente
 					sscanf(value, "%lf", &tensaoCarga);
 					
@@ -483,6 +523,8 @@ int main(void)
 						
 						sprintf(Buffer, "\n\r%.02lfV", tensaoCarga); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+						
+						tensaoCarga = (4096 / FUNDO_ESCALA_TENSAO) * tensaoCarga;
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao de corrente de carga.
@@ -499,6 +541,8 @@ int main(void)
 						
 						sprintf(Buffer, "\n\r%.02lfA", correnteCarga); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+						
+						correnteCarga = (4096 / FUNDO_ESCALA_CORRENTE) * correnteCarga;
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao de corrente de flutuação.
@@ -518,6 +562,8 @@ int main(void)
 						
 						sprintf(Buffer, "\n\r%.02lfA", correnteFlutuacao); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+						
+						correnteFlutuacao = (4096 / FUNDO_ESCALA_CORRENTE) * correnteFlutuacao;
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao do temperatura de carga.
@@ -537,6 +583,8 @@ int main(void)
 						
 						sprintf(Buffer, "\n\r%.02lfºC", temperaturaCarga); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
+						
+						temperaturaCarga = (4096 / (VREF / VARIACAO_LM35)) * temperaturaCarga;
 					}
 				}
 				else // Se não, indica que o comando é inválido
@@ -574,45 +622,66 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	dezMiliSeg++;
 	
 	// Base de tempo de 1 segundo
-	if (dezMiliSeg == 100)
+	if (dezMiliSeg == 50)
 	{
 		dezMiliSeg = 0;
+		quinhentosMiliseg++;
 		
-		// Pisca o led (Debug)
-		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-		
-		// Conta base de tempo do relógio
-		segundos++;
-		
-		// Base de tempo de 1 minuto
-		if (segundos == 60)
+		if (alarmeTemperatura)
 		{
-			segundos = 0;
-
-			if (fase == FASE_C)
-				fase = FASE_B;
-			
-			if (avisoTemperatura)
+			// Pica o LED Verde para sinalizar alarme de temperatura elevada
+			HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+		}
+		
+		if (quinhentosMiliseg == 2)
+		{
+		    quinhentosMiliseg = 0;
+			segundos++;
+		
+			// Base de tempo de 1 minuto
+			if (segundos == 60)
 			{
-				minutos++;
-				
-				if (minutos >= TEMPO_SOBREAQUECIMENTO)
+				segundos = 0;
+
+				if (fase == FASE_C)
+					fase = FASE_B;
+			
+				if (avisoTemperatura)
 				{
-					minutos = 0;
-					alarmeTemperatura = TRUE;
+					minutos++;
+				
+					if (minutos >= TEMPO_SOBREAQUECIMENTO)
+					{
+						minutos = 0;
+						alarmeTemperatura = TRUE;
+					}
 				}
 			}
 		}
 		
-		if (temperaturaMedia >= (temperaturaCarga * 1.1))
-			alarmeTemperatura = TRUE;
-		else if (temperaturaMedia >= temperaturaCarga)
-			avisoTemperatura = TRUE;
-		else
+		if (dadosBateriaComputados)
 		{
-			avisoTemperatura = FALSE;
-			alarmeTemperatura = FALSE;
-			minutos = 0;
+			if (temperaturaMedia >= (temperaturaCarga * 1.1))
+				alarmeTemperatura = TRUE;
+			else if (temperaturaMedia >= temperaturaCarga)
+			{
+				if (!alarmeTemperatura)
+				{
+					avisoTemperatura = TRUE;
+				
+					// Ascende o LED Verde para sinalizar sobreaquecimento
+					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, TRUE);
+				}
+			}
+			else
+			{
+				avisoTemperatura = FALSE;
+				alarmeTemperatura = FALSE;
+				minutos = 0;
+				
+				// Apaga o LED Verde
+				HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, FALSE);
+			}
 		}
 	}
 }
