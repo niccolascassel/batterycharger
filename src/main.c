@@ -37,7 +37,7 @@ TIM_OC_InitTypeDef pwmConfig;
 /* Variáveis para armazenamento da versão */
 unsigned char vMajor = 1;
 unsigned char vMinor = 0;
-unsigned char vBeta = 4;
+unsigned char vBeta = 0;
 
 /* Variáveis pra controle da base de tempo */
 volatile unsigned char dezMiliSeg = 0;
@@ -50,14 +50,14 @@ volatile unsigned char leAD = FALSE;
 unsigned char contLeAD = 0;
 volatile unsigned char avisoTemperatura = FALSE;
 volatile unsigned char alarmeTemperatura = FALSE;
-volatile unsigned char fase = FASE_A;
+volatile char fase = FASE_A;
 double tensaoCarga = 0;
 double tensaoFlutuacao = 0;
 double correnteCarga = 0;
 double correnteFlutuacao = 0;
 volatile double temperaturaCarga = 0;
 unsigned char aumentouDutyCicle = FALSE;
-unsigned char passoDutyCicle = 1;
+volatile unsigned char verificaFase = TRUE;
 
 /* Variáveis para armazenamento dos valores lidos pelo A/D */
 unsigned int tensaoInstantanea = 0;
@@ -144,7 +144,7 @@ int main(void)
       - Word  = 8 Bits
       - Stop Bit = One Stop bit
       - Parity = None
-      - BaudRate = 9600 baud
+      - BaudRate = 115200 baud
       - Hardware flow control disabled (RTS and CTS signals) */
 	huart2.Instance        = USART2;
 	huart2.Init.BaudRate   = 115200;
@@ -271,7 +271,7 @@ int main(void)
 	pwmConfig.OCNIdleState = TIM_OCNIDLESTATE_RESET;
 
 	/* Set the pulse value for channel 1  PB4*/
-	pwmConfig.Pulse = 1;
+	pwmConfig.Pulse = PULSE_VALUE;
 	HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
 	
 	/* Start PWM ignal */
@@ -365,111 +365,129 @@ int main(void)
 						
 						contLeAD = 0;
 						
-						tensao = (FUNDO_ESCALA_TENSAO / 4096) * (double)tensaoMedia;
-						corrente = (FUNDO_ESCALA_CORRENTE / 4096) * (double)correnteMedia;
-						temperatura = ((VREF / 4096) * (double)temperaturaMedia) / VARIACAO_LM35;
-						                                                        
-						sprintf(Buffer, "\n\r%.02lfV\t%.02lfA\t%.02lfºC", tensao, corrente, temperatura);  
+						tensao = (((double)VREF * tensaoMedia) / 4096) / ((double)VBAT_RES_BAIXO / (VBAT_RES_ALTO + VBAT_RES_BAIXO));
+						corrente = (double)correnteMedia / 4096;
+						temperatura = (double)(((VREF / 4096) * (double)temperaturaMedia) / VARIACAO_LM35);
+						                                                    
+						sprintf(Buffer, "\n\r%.02lfV\t%.02lfA\t%.02lfºC\t FASE %c", tensao, corrente, temperatura, fase);  
+						
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 					}
 					
 					leAD = FALSE;	// Desabilita leitura dos canais do A/D
 				}
 				
-				switch(fase)
+				if (verificaFase)
 				{
-					case FASE_A:
-						if (tensaoMedia < tensaoCarga)
-						{
-							if(correnteMedia < correnteCarga)
+					switch(fase)
+					{
+						case FASE_A:
+							if (tensaoMedia < tensaoCarga)
 							{
-								// Não permite que aumente o duty cicle se atingiu corrente máxima
-								if (correnteMedia < CORRENTE_MAXIMA_DIGITAL) 
+								if(correnteMedia < correnteCarga)
 								{
-									if (!aumentouDutyCicle)
-										passoDutyCicle *= 2;
-								
-									if ((pwmConfig.Pulse + (PULSE1_VALUE / passoDutyCicle)) < PERIOD_VALUE)
+									// Não permite que aumente o duty cicle se atingiu corrente máxima
+									if (correnteMedia < CORRENTE_MAXIMA_DIGITAL) 
 									{
-										// Incrementa duty cicle
-										pwmConfig.Pulse += (PULSE1_VALUE / passoDutyCicle);
+										if ((pwmConfig.Pulse + PULSE_VALUE) < PERIOD_VALUE)
+										{
+											// Incrementa duty cicle em 1%
+											pwmConfig.Pulse += PULSE_VALUE;
+											HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+											HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+											aumentouDutyCicle = TRUE;
+											verificaFase = FALSE;
+										}
+									}
+								}
+								else if (correnteMedia > correnteCarga)
+								{
+									if ((pwmConfig.Pulse - PULSE_VALUE) > 1)
+									{
+										//Decrementa duty cicle em 1%
+										pwmConfig.Pulse -= PULSE_VALUE;
 										HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
 										HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
-										aumentouDutyCicle = TRUE;
+										aumentouDutyCicle = FALSE;
+										verificaFase = FALSE;
 									}
 								}
 							}
-							else if (correnteMedia > correnteCarga)
+							else
 							{
-								if (aumentouDutyCicle)
-									passoDutyCicle *= 2;
-								
-								if ((pwmConfig.Pulse - (PULSE1_VALUE / passoDutyCicle)) > 1)
+								fase = FASE_B;
+							}
+							break;
+						
+						case FASE_B:
+							if (correnteMedia > correnteFlutuacao)
+							{	
+								if (tensaoMedia < tensaoCarga)
 								{
-									//Decrementa duty cicle em 10%
-									pwmConfig.Pulse -= (PULSE1_VALUE / passoDutyCicle);
-									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
-									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
-									aumentouDutyCicle = FALSE;
+									// Não permite que aumente o duty cicle se atingiu corrente máxima
+									if (correnteMedia < CORRENTE_MAXIMA_DIGITAL)
+									{
+										if ((pwmConfig.Pulse + PULSE_VALUE) < PERIOD_VALUE)
+										{
+											// Incrementa duty cicle em 1%
+											pwmConfig.Pulse += PULSE_VALUE;
+											HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+											HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+											aumentouDutyCicle = TRUE;
+											verificaFase = FALSE;
+										}
+									}
+								}
+								else if (tensaoMedia > tensaoCarga)
+								{
+									if ((pwmConfig.Pulse - PULSE_VALUE) > 1)
+									{
+										//Decrementa duty cicle em 1%
+										pwmConfig.Pulse -= PULSE_VALUE;
+										HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
+										HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
+										aumentouDutyCicle = FALSE;
+										verificaFase = FALSE;
+									}
 								}
 							}
-						}
-						else
-						{
-							fase = FASE_B;
-							passoDutyCicle = 1;
-						}
-						break;
-					
-					case FASE_B:
-						if (correnteMedia > correnteCarga)
-						{	
-							if (tensaoMedia < tensaoCarga)
+							else
+							{
+								fase = FASE_C;
+							}
+							break;
+						
+						case FASE_C:
+							if (tensaoMedia < tensaoFlutuacao)
 							{
 								// Não permite que aumente o duty cicle se atingiu corrente máxima
 								if (correnteMedia < CORRENTE_MAXIMA_DIGITAL)
 								{
-									if (!aumentouDutyCicle)
-										passoDutyCicle *= 2;
-									
-									if ((pwmConfig.Pulse + (PULSE1_VALUE / passoDutyCicle)) < PERIOD_VALUE)
+									if ((pwmConfig.Pulse + PULSE_VALUE) < PERIOD_VALUE)
 									{
-										// Incrementa duty cicle em 10%
-										pwmConfig.Pulse += (PULSE1_VALUE / passoDutyCicle);
+										// Incrementa duty cicle em 1%
+										pwmConfig.Pulse += PULSE_VALUE;
 										HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
 										HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
 										aumentouDutyCicle = TRUE;
+										verificaFase = FALSE;
 									}
 								}
 							}
-							else if (tensaoMedia > tensaoCarga)
+							else if (tensaoMedia > tensaoFlutuacao)
 							{
-								if (aumentouDutyCicle)
-									passoDutyCicle *= 2;
-								
-								if ((pwmConfig.Pulse - (PULSE1_VALUE / passoDutyCicle)) > 1)
+								if ((pwmConfig.Pulse - PULSE_VALUE) > 1)
 								{
-									//Decrementa duty cicle em 10%
-									pwmConfig.Pulse -= (PULSE1_VALUE / passoDutyCicle);
+									//Decrementa duty cicle em 1%
+									pwmConfig.Pulse -= PULSE_VALUE;
 									HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
 									HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
 									aumentouDutyCicle = FALSE;
+									verificaFase = FALSE;
 								}
 							}
-						}
-						else
-						{
-							fase = FASE_C;
-							passoDutyCicle = 1;
-						}
-						break;
-					
-					case FASE_C:
-						// Diminui duty cicle para 20%
-						pwmConfig.Pulse = PULSE1_VALUE * 2;
-						HAL_TIM_PWM_ConfigChannel(&pwmTimHandle, &pwmConfig, TIM_CHANNEL_1);
-						HAL_TIM_PWM_Start(&pwmTimHandle, TIM_CHANNEL_1);
-						break;
+							break;
+					}
 				}
 			}
 		}
@@ -488,7 +506,7 @@ int main(void)
 				// Copia as posições referentes ao valor
 				for(unsigned char i = 0; i < sizeof(value)/sizeof(value[0]); i++)
 					value[i] = pacoteSerial[i + sizeof(cmd)/sizeof(cmd[0])];
-						
+										
 				// Verifica se o comando recebido é de configuracao de tensao de flutuação
 				if (!strcmp(cmd, TENSAO_FLUTUACAO)) 
 				{
@@ -505,7 +523,7 @@ int main(void)
 						sprintf(Buffer, "\n\r%.02lfV", tensaoFlutuacao); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 						
-						tensaoFlutuacao = (4096 / FUNDO_ESCALA_TENSAO) * tensaoFlutuacao;
+						tensaoFlutuacao = (4096 / VREF) * (tensaoFlutuacao * ((double)VBAT_RES_BAIXO / (VBAT_RES_ALTO + VBAT_RES_BAIXO)));
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao de tensao de carga
@@ -524,7 +542,7 @@ int main(void)
 						sprintf(Buffer, "\n\r%.02lfV", tensaoCarga); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 						
-						tensaoCarga = (4096 / FUNDO_ESCALA_TENSAO) * tensaoCarga;
+						tensaoCarga = (4096 / VREF) * (tensaoCarga * ((double)VBAT_RES_BAIXO / (VBAT_RES_ALTO + VBAT_RES_BAIXO)));
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao de corrente de carga.
@@ -542,7 +560,7 @@ int main(void)
 						sprintf(Buffer, "\n\r%.02lfA", correnteCarga); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 						
-						correnteCarga = (4096 / FUNDO_ESCALA_CORRENTE) * correnteCarga;
+						correnteCarga = 4096 * correnteCarga;
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao de corrente de flutuação.
@@ -563,7 +581,7 @@ int main(void)
 						sprintf(Buffer, "\n\r%.02lfA", correnteFlutuacao); 
 						HAL_UART_Transmit(&huart2, (uint8_t*)Buffer, sizeof(Buffer), 100);
 						
-						correnteFlutuacao = (4096 / FUNDO_ESCALA_CORRENTE) * correnteFlutuacao;
+						correnteFlutuacao = 4096 * correnteFlutuacao;
 					}
 				}
 				// Se não, verifica se o comando recebido é de configuracao do temperatura de carga.
@@ -626,6 +644,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	{
 		dezMiliSeg = 0;
 		quinhentosMiliseg++;
+		
+		verificaFase = TRUE;
 		
 		if (alarmeTemperatura)
 		{
